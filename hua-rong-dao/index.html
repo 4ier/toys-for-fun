@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>掌上华容道</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <main class="page">
+    <header class="top">
+      <div class="title">
+        <p class="eyebrow">掌上智趣</p>
+        <h1>华容道</h1>
+      </div>
+      <div class="actions">
+        <button id="undoBtn" class="btn ghost" disabled>撤销</button>
+        <button id="resetBtn" class="btn solid">复位</button>
+      </div>
+    </header>
+
+    <section class="status">
+      <div class="stat">
+        <span class="label">步数</span>
+        <span id="stepCount" class="value">0</span>
+      </div>
+      <div id="winLabel" class="stat good" hidden>曹操已出关！</div>
+    </section>
+
+    <section class="board-wrap">
+      <div class="board-bg">
+        <div class="doorway">
+          <div class="door">出口</div>
+        </div>
+      </div>
+      <div id="board" class="board" aria-label="华容道棋盘"></div>
+    </section>
+
+    <section class="notes">
+      <p>拖动或轻滑棋子，让曹操从下方门口离开。可随时“撤销”或“复位”。</p>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden>胜利！曹操顺利逃出。</div>
+
+  <script src="./main.js"></script>
+</body>
+</html>
