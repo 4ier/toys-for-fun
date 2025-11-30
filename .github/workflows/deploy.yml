@@ -4,21 +4,52 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'hua-rong-dao/**'
+
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: 拉取代码
         uses: actions/checkout@v4
 
-      - name: 发布静态文件
-        uses: peaceiris/actions-gh-pages@v3
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./hua-rong-dao
-          publish_branch: gh-pages
-          commit_message: "chore: 发布华容道页面"
+          node-version: '20'
+
+      - name: 安装依赖
+        working-directory: ./hua-rong-dao
+        run: npm install
+
+      - name: 构建项目
+        working-directory: ./hua-rong-dao
+        run: npm run build
+
+      - name: 上传构建产物
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./hua-rong-dao/dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: 部署到 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
