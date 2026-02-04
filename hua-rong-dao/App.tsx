@@ -15,7 +15,10 @@ declare global {
       executeMoves: (moves: string[]) => Promise<void>;
       reset: () => void;
       getPieces: () => any[];
+      connectWS: (url?: string) => void;
+      disconnectWS: () => void;
     };
+    hrdWS?: WebSocket;
   }
 }
 
@@ -28,6 +31,8 @@ const App: React.FC = () => {
   });
 
   const [showApiPanel, setShowApiPanel] = useState(false);
+  const [wsStatus, setWsStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+  const [wsUrl, setWsUrl] = useState('ws://localhost:8765');
   const gameStateRef = useRef(gameState);
   
   // Keep ref in sync
@@ -135,6 +140,85 @@ const App: React.FC = () => {
           history: [],
         });
         console.log('Game reset');
+      },
+
+      // WebSocket control
+      connectWS: (url?: string) => {
+        const wsUrl = url || 'ws://localhost:8765';
+        if (window.hrdWS) {
+          window.hrdWS.close();
+        }
+        
+        setWsStatus('connecting');
+        console.log(`Connecting to ${wsUrl}...`);
+        
+        const ws = new WebSocket(wsUrl);
+        
+        ws.onopen = () => {
+          console.log('✅ WebSocket connected!');
+          setWsStatus('connected');
+          ws.send(JSON.stringify({ type: 'hello', board: window.hrd.getBoard() }));
+        };
+        
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            console.log('📩 Received:', msg);
+            
+            if (msg.type === 'move') {
+              const success = window.hrd.move(msg.piece, msg.direction);
+              ws.send(JSON.stringify({ 
+                type: 'moveResult', 
+                success, 
+                board: window.hrd.getBoard(),
+                state: window.hrd.getState()
+              }));
+            } else if (msg.type === 'getBoard') {
+              ws.send(JSON.stringify({ 
+                type: 'board', 
+                board: window.hrd.getBoard(),
+                state: window.hrd.getState()
+              }));
+            } else if (msg.type === 'reset') {
+              window.hrd.reset();
+              ws.send(JSON.stringify({ 
+                type: 'resetDone', 
+                board: window.hrd.getBoard() 
+              }));
+            } else if (msg.type === 'executeMoves') {
+              window.hrd.executeMoves(msg.moves).then(() => {
+                ws.send(JSON.stringify({ 
+                  type: 'executeDone', 
+                  board: window.hrd.getBoard(),
+                  state: window.hrd.getState()
+                }));
+              });
+            }
+          } catch (e) {
+            console.error('Failed to parse message:', e);
+          }
+        };
+        
+        ws.onclose = () => {
+          console.log('❌ WebSocket disconnected');
+          setWsStatus('disconnected');
+          window.hrdWS = undefined;
+        };
+        
+        ws.onerror = (err) => {
+          console.error('WebSocket error:', err);
+          setWsStatus('disconnected');
+        };
+        
+        window.hrdWS = ws;
+      },
+
+      disconnectWS: () => {
+        if (window.hrdWS) {
+          window.hrdWS.close();
+          window.hrdWS = undefined;
+        }
+        setWsStatus('disconnected');
       },
     };
 
@@ -272,18 +356,48 @@ const App: React.FC = () => {
 
         {/* API Panel */}
         {showApiPanel && (
-          <div className="w-full max-w-sm mb-4 p-3 bg-stone-800 text-green-400 rounded-lg text-xs font-mono overflow-auto max-h-48">
+          <div className="w-full max-w-sm mb-4 p-3 bg-stone-800 text-green-400 rounded-lg text-xs font-mono overflow-auto max-h-64">
             <div className="mb-2 text-green-300">🤖 AI API 已启用</div>
-            <div className="text-stone-400">// 在控制台执行:</div>
-            <div>hrd.getBoard()  <span className="text-stone-500">// 棋盘</span></div>
-            <div>hrd.move("cc","down") <span className="text-stone-500">// 移动</span></div>
-            <div>hrd.executeMoves([...])</div>
-            <div className="mt-2 text-stone-400">// 快捷键:</div>
-            <div>E=导出 B=打印棋盘 A=关闭面板</div>
+            
+            {/* WebSocket Control */}
+            <div className="mb-3 p-2 bg-stone-700 rounded">
+              <div className="flex items-center gap-2 mb-2">
+                <span className={`w-2 h-2 rounded-full ${
+                  wsStatus === 'connected' ? 'bg-green-500' : 
+                  wsStatus === 'connecting' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+                }`}></span>
+                <span className="text-stone-300">WebSocket: {wsStatus}</span>
+              </div>
+              <input 
+                type="text" 
+                value={wsUrl}
+                onChange={(e) => setWsUrl(e.target.value)}
+                className="w-full bg-stone-900 text-green-400 px-2 py-1 rounded text-xs mb-2"
+                placeholder="ws://localhost:8765"
+              />
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => window.hrd.connectWS(wsUrl)}
+                  className="flex-1 bg-green-700 hover:bg-green-600 text-white px-2 py-1 rounded text-xs"
+                >
+                  连接
+                </button>
+                <button 
+                  onClick={() => window.hrd.disconnectWS()}
+                  className="flex-1 bg-red-700 hover:bg-red-600 text-white px-2 py-1 rounded text-xs"
+                >
+                  断开
+                </button>
+              </div>
+            </div>
+
+            <div className="text-stone-400">// 控制台命令:</div>
+            <div>hrd.getBoard() <span className="text-stone-500">// 棋盘</span></div>
+            <div>hrd.move("cc","down")</div>
+            <div>hrd.connectWS("ws://...")</div>
             <div className="mt-2 text-stone-400">// 棋子ID:</div>
             <div>cc=曹操 gy=关羽 zf=张飞</div>
             <div>zy=赵云 mc=马超 hz=黄忠</div>
-            <div>s1 s2 s3 s4=四卒</div>
             <pre className="mt-2 text-yellow-300 whitespace-pre">{serializeBoard(gameState.pieces)}</pre>
           </div>
         )}
