@@ -1,9 +1,23 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { GameState, Direction, Piece as PieceType } from './types';
 import { INITIAL_LEVEL } from './constants';
-import { tryMovePiece, checkWin, clonePieces } from './utils/gameLogic';
+import { tryMovePiece, checkWin, clonePieces, serializeBoard } from './utils/gameLogic';
 import GameBoard from './components/GameBoard';
-import { Undo2, RefreshCw, Trophy } from 'lucide-react';
+import { Undo2, RefreshCw, Trophy, Bot } from 'lucide-react';
+
+// Global API for AI control
+declare global {
+  interface Window {
+    hrd: {
+      getState: () => any;
+      getBoard: () => string;
+      move: (pieceId: string, direction: string) => boolean;
+      executeMoves: (moves: string[]) => Promise<void>;
+      reset: () => void;
+      getPieces: () => any[];
+    };
+  }
+}
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>({
@@ -13,12 +27,157 @@ const App: React.FC = () => {
     history: [],
   });
 
+  const [showApiPanel, setShowApiPanel] = useState(false);
+  const gameStateRef = useRef(gameState);
+  
+  // Keep ref in sync
+  useEffect(() => {
+    gameStateRef.current = gameState;
+  }, [gameState]);
+
   // Initialize checks
   useEffect(() => {
     if (checkWin(gameState.pieces) && !gameState.isWon) {
       setGameState(prev => ({ ...prev, isWon: true }));
     }
   }, [gameState.pieces, gameState.isWon]);
+
+  // Expose global API for AI control
+  useEffect(() => {
+    const directionMap: Record<string, Direction> = {
+      'up': Direction.UP,
+      'down': Direction.DOWN,
+      'left': Direction.LEFT,
+      'right': Direction.RIGHT,
+      'UP': Direction.UP,
+      'DOWN': Direction.DOWN,
+      'LEFT': Direction.LEFT,
+      'RIGHT': Direction.RIGHT,
+    };
+
+    window.hrd = {
+      // Get full game state
+      getState: () => ({
+        pieces: gameStateRef.current.pieces.map(p => ({
+          id: p.id,
+          label: p.label,
+          x: p.x,
+          y: p.y,
+          w: p.w,
+          h: p.h,
+        })),
+        moveCount: gameStateRef.current.moveCount,
+        isWon: gameStateRef.current.isWon,
+      }),
+
+      // Get ASCII board representation
+      getBoard: () => serializeBoard(gameStateRef.current.pieces),
+
+      // Get pieces list with labels
+      getPieces: () => gameStateRef.current.pieces.map(p => ({
+        id: p.id,
+        label: p.label,
+        x: p.x,
+        y: p.y,
+        w: p.w,
+        h: p.h,
+      })),
+
+      // Execute a single move
+      move: (pieceId: string, direction: string) => {
+        const dir = directionMap[direction];
+        if (!dir) {
+          console.error(`Invalid direction: ${direction}. Use up/down/left/right`);
+          return false;
+        }
+
+        const current = gameStateRef.current;
+        if (current.isWon) {
+          console.log('Game already won!');
+          return false;
+        }
+
+        const newPieces = tryMovePiece(current.pieces, pieceId, dir);
+        if (newPieces) {
+          setGameState(prev => ({
+            ...prev,
+            pieces: newPieces,
+            moveCount: prev.moveCount + 1,
+            history: [...prev.history.slice(-49), clonePieces(prev.pieces)],
+          }));
+          return true;
+        }
+        console.log(`Move failed: ${pieceId} ${direction}`);
+        return false;
+      },
+
+      // Execute multiple moves with delay
+      executeMoves: async (moves: string[]) => {
+        for (const move of moves) {
+          const [pieceId, direction] = move.trim().split(/\s+/);
+          const success = window.hrd.move(pieceId, direction);
+          if (!success) {
+            console.error(`Failed at move: ${move}`);
+            break;
+          }
+          // Small delay for visual feedback
+          await new Promise(r => setTimeout(r, 300));
+        }
+        console.log('Execution complete. Board state:', window.hrd.getBoard());
+      },
+
+      // Reset the game
+      reset: () => {
+        setGameState({
+          pieces: clonePieces(INITIAL_LEVEL),
+          moveCount: 0,
+          isWon: false,
+          history: [],
+        });
+        console.log('Game reset');
+      },
+    };
+
+    console.log('🎮 华容道 AI API 已加载');
+    console.log('可用命令:');
+    console.log('  hrd.getBoard()        - 获取棋盘状态');
+    console.log('  hrd.getPieces()       - 获取棋子列表');
+    console.log('  hrd.move("cc","down") - 移动棋子 (cc=曹操)');
+    console.log('  hrd.executeMoves(["cc down","gy left"]) - 批量执行');
+    console.log('  hrd.reset()           - 重置游戏');
+    console.log('棋子ID: cc=曹操, zf=张飞, zy=赵云, mc=马超, gy=关羽, hz=黄忠, s1-s4=卒');
+
+    return () => {
+      delete (window as any).hrd;
+    };
+  }, []);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 'E' to export state to clipboard
+      if (e.key === 'e' || e.key === 'E') {
+        const state = JSON.stringify(window.hrd.getState(), null, 2);
+        navigator.clipboard.writeText(state).then(() => {
+          alert('棋盘状态已复制到剪贴板！');
+        }).catch(() => {
+          console.log('State:', state);
+          alert('复制失败，请查看控制台');
+        });
+      }
+      // 'B' to show board in console
+      if (e.key === 'b' || e.key === 'B') {
+        console.log('Current board:\n' + window.hrd.getBoard());
+      }
+      // 'A' to toggle API panel
+      if (e.key === 'a' || e.key === 'A') {
+        setShowApiPanel(prev => !prev);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const handleMove = useCallback((id: string, direction: Direction) => {
     if (gameState.isWon) return;
@@ -87,6 +246,13 @@ const App: React.FC = () => {
           
           <div className="flex gap-3">
               <button 
+                  onClick={() => setShowApiPanel(prev => !prev)}
+                  className="flex flex-col items-center justify-center w-12 h-12 bg-white rounded-full shadow-sm border border-stone-200 text-stone-600 active:scale-95 transition-all hover:bg-stone-50"
+                  title="AI API (按 A)"
+              >
+                  <Bot size={20} />
+              </button>
+              <button 
                   onClick={handleUndo} 
                   disabled={gameState.history.length === 0 || gameState.isWon}
                   className="flex flex-col items-center justify-center w-12 h-12 bg-white rounded-full shadow-sm border border-stone-200 text-stone-600 active:scale-95 disabled:opacity-40 disabled:active:scale-100 transition-all hover:bg-stone-50"
@@ -103,6 +269,24 @@ const App: React.FC = () => {
               </button>
           </div>
         </div>
+
+        {/* API Panel */}
+        {showApiPanel && (
+          <div className="w-full max-w-sm mb-4 p-3 bg-stone-800 text-green-400 rounded-lg text-xs font-mono overflow-auto max-h-48">
+            <div className="mb-2 text-green-300">🤖 AI API 已启用</div>
+            <div className="text-stone-400">// 在控制台执行:</div>
+            <div>hrd.getBoard()  <span className="text-stone-500">// 棋盘</span></div>
+            <div>hrd.move("cc","down") <span className="text-stone-500">// 移动</span></div>
+            <div>hrd.executeMoves([...])</div>
+            <div className="mt-2 text-stone-400">// 快捷键:</div>
+            <div>E=导出 B=打印棋盘 A=关闭面板</div>
+            <div className="mt-2 text-stone-400">// 棋子ID:</div>
+            <div>cc=曹操 gy=关羽 zf=张飞</div>
+            <div>zy=赵云 mc=马超 hz=黄忠</div>
+            <div>s1 s2 s3 s4=四卒</div>
+            <pre className="mt-2 text-yellow-300 whitespace-pre">{serializeBoard(gameState.pieces)}</pre>
+          </div>
+        )}
 
         {/* Game Board */}
         <GameBoard pieces={gameState.pieces} onMove={handleMove} />
